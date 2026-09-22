@@ -1,0 +1,32 @@
+# Environment / secrets
+.env
+.env.production
+
+# Runtime data
+data/*.db
+data/*.csv
+data/*.zip
+
+# Logs
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated notebook outputs
+notebooks/*.html
+notebooks/*.csv

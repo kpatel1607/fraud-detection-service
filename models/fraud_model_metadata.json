@@ -1,0 +1,43 @@
+{
+    "model_name": "fraud_detection_xgboost",
+    "model_version": "1.1.0",
+    "features": [
+        "amt",
+        "hour",
+        "category",
+        "prev_avg_amt",
+        "prev_5_avg_amt",
+        "amt_ratio_recent5"
+    ],
+    "categorical_features": [
+        "category"
+    ],
+    "numeric_features": [
+        "amt",
+        "hour",
+        "prev_avg_amt",
+        "prev_5_avg_amt",
+        "amt_ratio_recent5"
+    ],
+    "model_type": "XGBClassifier",
+    "objective": "binary:logistic",
+    "hyperparameters": {
+        "max_depth": 6,
+        "min_child_weight": 5,
+        "subsample": 0.8,
+        "learning_rate": 0.05,
+        "colsample_bytree": 0.8,
+        "n_estimators": 1000,
+        "tree_method": "hist",
+        "early_stopping_rounds": 50
+    },
+    "best_iteration": 471,
+    "validation_best_pr_auc": 0.9694893983269536,
+    "validation_pr_auc": 0.969498,
+    "validation_roc_auc": 0.999436,
+    "default_threshold": 0.5,
+    "alternative_thresholds": {
+        "higher_recall": 0.35,
+        "balanced": 0.4
+    }
+}
