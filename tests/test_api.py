@@ -7,6 +7,7 @@ from src.config import Settings
 def create_test_client(tmp_path):
     settings = Settings(
         api_key="test-secret-key",
+        allowed_hosts="testserver,localhost,127.0.0.1",
         state_db_path=str(tmp_path / "state.db"),
         transaction_db_path=str(tmp_path / "transactions.db"),
         review_db_path=str(tmp_path / "review.db"),
