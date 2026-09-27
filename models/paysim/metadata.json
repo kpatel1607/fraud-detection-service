@@ -1,0 +1,73 @@
+{
+  "model_name": "paysim_fraud_xgboost",
+  "dataset": "PaySim",
+  "model_type": "XGBClassifier",
+  "objective": "binary:logistic",
+  "features": [
+    "type",
+    "amount",
+    "oldbalanceOrg",
+    "oldbalanceDest",
+    "sender_balance_coverage",
+    "log_sender_amount_ratio",
+    "sender_balance_zero",
+    "destination_balance_zero"
+  ],
+  "categorical_features": [
+    "type"
+  ],
+  "numeric_features": [
+    "amount",
+    "oldbalanceOrg",
+    "oldbalanceDest",
+    "sender_balance_coverage",
+    "log_sender_amount_ratio",
+    "sender_balance_zero",
+    "destination_balance_zero"
+  ],
+  "excluded_features": {
+    "post_transaction": [
+      "newbalanceOrig",
+      "newbalanceDest"
+    ],
+    "existing_fraud_rule": [
+      "isFlaggedFraud"
+    ],
+    "identifier_like": [
+      "nameOrig",
+      "nameDest"
+    ],
+    "ablation_removed": [
+      "step"
+    ]
+  },
+  "hyperparameters": {
+    "n_estimators": 1000,
+    "learning_rate": 0.05,
+    "max_depth": 8,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "tree_method": "hist",
+    "random_state": 42
+  },
+  "training": {
+    "split_strategy": "chronological",
+    "train_steps": "1-499",
+    "validation_steps": "500-599",
+    "test_steps": "600-743",
+    "early_stopping_rounds": 50,
+    "selection_metric": "validation_pr_auc"
+  },
+  "test_metrics": {
+    "pr_auc": 0.9939170828461817,
+    "roc_auc": 0.9998841491489112,
+    "precision": 0.9477,
+    "recall": 0.9969,
+    "f1": 0.9717,
+    "true_negatives": 101884,
+    "false_positives": 89,
+    "false_negatives": 5,
+    "true_positives": 1613
+  }
+}

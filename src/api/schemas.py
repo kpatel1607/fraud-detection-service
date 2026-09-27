@@ -73,3 +73,41 @@ class MetricsResponse(BaseModel):
     recall: float
     f1_score: float
     accuracy: float
+    
+class PaySimScoreRequest(BaseModel):
+    transaction_id: str = Field(min_length=1)
+    transaction_type: str = Field(min_length=1)
+    amount: float = Field(ge=0)
+    oldbalance_org: float = Field(ge=0)
+    oldbalance_dest: float = Field(ge=0)
+
+
+class PaySimScoreResponse(BaseModel):
+    transaction_id: str
+    fraud_probability: float
+    model_decision: str
+    risk_level: str
+    action: str
+    
+class PaySimReviewResponse(BaseModel):
+    review_id: int
+    transaction_id: str
+    transaction_type: str
+
+    amount: float
+    oldbalance_org: float
+    oldbalance_dest: float
+
+    fraud_probability: float
+    model_decision: str
+    risk_level: str
+    action: str
+
+    status: str
+    actual_outcome: str | None
+    created_at: str
+    reviewed_at: str | None
+
+
+class PaySimResolveReviewRequest(BaseModel):
+    actual_outcome: str

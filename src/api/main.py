@@ -4,21 +4,27 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, Request, Depends
 
+from src.rules.paysim_risk_policy import PaySimRiskPolicy
 from src.logging_config import configure_logging, get_logger
 from src.config import Settings
 
 from src.monitoring.evaluator import TransactionEvaluator
+from src.monitoring.paysim_evaluator import PaySimTransactionEvaluator
 
 from src.api.security import create_api_key_dependency
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src.api.schemas import (
+    PaySimScoreRequest,
+    PaySimScoreResponse,
     ScoreRequest,
     ScoreResponse,
     ReviewResponse,
     ResolveReviewRequest,
     MetricsResponse,
+    PaySimReviewResponse,
+    PaySimResolveReviewRequest,
 )
 from src.features.historical import HistoricalFeatureEngine
 from src.features.state_store import CardStateStore
@@ -30,6 +36,10 @@ from src.model.feature_builder import FraudModelFeatureBuilder
 from src.storage.transaction_store import TransactionStore
 from src.domain.transaction import CanonicalTransaction
 from src.features.canonical import CanonicalFeatureEngine
+from src.domain.paysim_transaction import PaySimTransaction
+from src.services.paysim_scoring import PaySimScoringService
+from src.review.paysim_review_queue import PaySimReviewQueue
+from src.storage.paysim_transaction_store import PaySimTransactionStore
 
 
 def create_app(
@@ -83,6 +93,14 @@ def create_app(
     evaluator = TransactionEvaluator(
         transaction_store=transaction_store
     )
+    
+    paysim_transaction_store = PaySimTransactionStore(
+        db_path=settings.paysim_transaction_db_path
+    )
+
+    paysim_evaluator = PaySimTransactionEvaluator(
+        transaction_store=paysim_transaction_store
+    )
 
     historical_engine = HistoricalFeatureEngine(
         state_store=state_store
@@ -116,6 +134,19 @@ def create_app(
         risk_engine=risk_engine,
         review_queue=review_queue,
         transaction_store=transaction_store,
+    )
+    
+    paysim_review_queue = PaySimReviewQueue(
+        db_path=settings.paysim_review_db_path,
+    )
+
+    paysim_service = PaySimScoringService(
+        risk_policy=PaySimRiskPolicy(
+            review_threshold=settings.review_threshold,
+            high_risk_threshold=settings.high_risk_threshold,
+        ),
+        review_queue=paysim_review_queue,
+        transaction_store=paysim_transaction_store,
     )
 
     # --------------------------------------------------
@@ -181,12 +212,37 @@ def create_app(
             "service": "fraud-detection-api",
             "model_version": settings.model_version,
         }
+        
+    @app.post(
+        "/score/paysim",
+        response_model=PaySimScoreResponse,
+        dependencies=[Depends(api_key_dependency)],
+    )
+    def score_paysim(request: PaySimScoreRequest) -> PaySimScoreResponse:
+        transaction = PaySimTransaction(
+            transaction_id=request.transaction_id,
+            transaction_type=request.transaction_type,
+            amount=request.amount,
+            oldbalance_org=request.oldbalance_org,
+            oldbalance_dest=request.oldbalance_dest,
+        )
 
+        result = paysim_service.score(transaction)
+
+        return PaySimScoreResponse(
+            transaction_id=result.transaction_id,
+            fraud_probability=result.fraud_probability,
+            model_decision=result.model_decision,
+            risk_level=result.risk_level,
+            action=result.action,
+        )
+        
     @app.post(
         "/score",
         response_model=ScoreResponse,
         dependencies=[Depends(api_key_dependency)],
     )
+    
     def score_transaction(
         request: Request,
         payload: ScoreRequest,
@@ -296,6 +352,20 @@ def create_app(
             review_to_response(review)
             for review in reviews
         ]
+        
+    @app.get(
+        "/reviews/paysim",
+        response_model=list[PaySimReviewResponse],
+        dependencies=[Depends(api_key_dependency)],
+    )
+    
+    def get_pending_paysim_reviews():
+        reviews = paysim_review_queue.get_pending_reviews()
+
+        return [
+            PaySimReviewResponse(**review)
+            for review in reviews
+        ]
 
     @app.post(
         "/reviews/{transaction_id}/resolve",
@@ -364,6 +434,48 @@ def create_app(
                 detail="Internal review resolution error.",
             )
             
+    @app.post(
+        "/reviews/paysim/{transaction_id}/resolve",
+        response_model=PaySimReviewResponse,
+        dependencies=[Depends(api_key_dependency)],
+    )
+    def resolve_paysim_review(
+        transaction_id: str,
+        payload: PaySimResolveReviewRequest,
+    ):
+        try:
+            review = paysim_review_queue.resolve_review(
+                transaction_id=transaction_id,
+                actual_outcome=payload.actual_outcome,
+            )
+
+            if review is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"No pending PaySim review found for "
+                        f"transaction_id={transaction_id}"
+                    ),
+                )
+                
+            paysim_transaction_store.set_actual_outcome(
+                transaction_id=transaction_id,
+                actual_outcome=payload.actual_outcome,
+                outcome_source="ANALYST_REVIEW",
+                outcome_reason="PaySim review resolved by analyst.",
+            )
+
+            return PaySimReviewResponse(**review)
+
+        except HTTPException:
+            raise
+
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=str(exc),
+            )
+            
     @app.get(
         "/monitoring/metrics",
         response_model=MetricsResponse,
@@ -371,6 +483,33 @@ def create_app(
     )
     def get_monitoring_metrics():
         metrics = evaluator.evaluate()
+
+        evaluated_transactions = (
+            metrics.true_positives
+            + metrics.true_negatives
+            + metrics.false_positives
+            + metrics.false_negatives
+        )
+
+        return MetricsResponse(
+            evaluated_transactions=evaluated_transactions,
+            true_positives=metrics.true_positives,
+            true_negatives=metrics.true_negatives,
+            false_positives=metrics.false_positives,
+            false_negatives=metrics.false_negatives,
+            precision=metrics.precision,
+            recall=metrics.recall,
+            f1_score=metrics.f1_score,
+            accuracy=metrics.accuracy,
+        )
+        
+    @app.get(
+        "/monitoring/paysim/metrics",
+        response_model=MetricsResponse,
+        dependencies=[Depends(api_key_dependency)],
+    )
+    def get_paysim_monitoring_metrics():
+        metrics = paysim_evaluator.evaluate()
 
         evaluated_transactions = (
             metrics.true_positives

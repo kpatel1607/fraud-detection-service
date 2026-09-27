@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     state_db_path: str = "data/fraud_state.db"
     transaction_db_path: str = "data/transactions.db"
     review_db_path: str = "data/review_queue.db"
+    paysim_review_db_path: str = "data/paysim_review_queue.db"
+    paysim_transaction_db_path: str = "data/paysim_transactions.db"
 
     # ----------------------------------------------
     # Risk policy

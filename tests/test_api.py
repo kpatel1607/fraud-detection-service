@@ -2,6 +2,9 @@ from fastapi.testclient import TestClient
 
 from src.api.main import create_app
 from src.config import Settings
+from src.review.paysim_review import PaySimReview
+from src.review.paysim_review_queue import PaySimReviewQueue
+from src.storage.paysim_transaction_store import PaySimTransactionStore
 
 
 def create_test_client(tmp_path):
@@ -11,6 +14,12 @@ def create_test_client(tmp_path):
         state_db_path=str(tmp_path / "state.db"),
         transaction_db_path=str(tmp_path / "transactions.db"),
         review_db_path=str(tmp_path / "review.db"),
+        paysim_review_db_path=str(
+            tmp_path / "paysim_review_queue.db"
+        ),
+        paysim_transaction_db_path=str(
+            tmp_path / "paysim_transactions.db"
+        ),
     )
 
     app = create_app(settings)
@@ -406,3 +415,242 @@ def test_docs_can_be_disabled(tmp_path):
     response = client.get("/docs")
 
     assert response.status_code == 404
+    
+def test_paysim_score(tmp_path):
+    client = create_test_client(tmp_path)
+
+    response = client.post(
+        "/score/paysim",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+        json={
+            "transaction_id": "api_paysim_001",
+            "transaction_type": "TRANSFER",
+            "amount": 1000.0,
+            "oldbalance_org": 5000.0,
+            "oldbalance_dest": 0.0,
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["transaction_id"] == "api_paysim_001"
+    assert 0.0 <= data["fraud_probability"] <= 1.0
+    assert data["model_decision"] == "LEGITIMATE"
+    assert data["risk_level"] == "LOW_RISK"
+    assert data["action"] == "APPROVE"
+    
+def test_paysim_high_risk_transaction_is_held(tmp_path):
+    client = create_test_client(tmp_path)
+
+    response = client.post(
+        "/score/paysim",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+        json={
+            "transaction_id": "api_paysim_high_risk_001",
+            "transaction_type": "TRANSFER",
+            "amount": 500000.0,
+            "oldbalance_org": 500000.0,
+            "oldbalance_dest": 0.0,
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["transaction_id"] == "api_paysim_high_risk_001"
+    assert data["fraud_probability"] >= 0.80
+    assert data["model_decision"] == "FRAUD"
+    assert data["risk_level"] == "HIGH_RISK"
+    assert data["action"] == "HOLD"
+    
+def test_paysim_score_requires_api_key(tmp_path):
+    client = create_test_client(tmp_path)
+
+    response = client.post(
+        "/score/paysim",
+        json={
+            "transaction_id": "api_paysim_security_001",
+            "transaction_type": "TRANSFER",
+            "amount": 1000.0,
+            "oldbalance_org": 5000.0,
+            "oldbalance_dest": 0.0,
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_paysim_invalid_amount_is_rejected(tmp_path):
+    client = create_test_client(tmp_path)
+
+    response = client.post(
+        "/score/paysim",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+        json={
+            "transaction_id": "api_paysim_invalid_001",
+            "transaction_type": "TRANSFER",
+            "amount": -100.0,
+            "oldbalance_org": 5000.0,
+            "oldbalance_dest": 0.0,
+        },
+    )
+
+    assert response.status_code == 422
+    
+def test_get_pending_paysim_reviews(tmp_path):
+    client = create_test_client(tmp_path)
+
+    response = client.get(
+        "/reviews/paysim",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+    
+def test_get_pending_paysim_reviews_returns_pending_review(tmp_path):
+    client = create_test_client(tmp_path)
+
+    review_queue = PaySimReviewQueue(
+        db_path=str(tmp_path / "paysim_review_queue.db")
+    )
+
+    review = PaySimReview(
+        transaction_id="api-review-001",
+        transaction_type="TRANSFER",
+        amount=10000.0,
+        oldbalance_org=20000.0,
+        oldbalance_dest=0.0,
+        fraud_probability=0.60,
+        model_decision="FRAUD",
+        risk_level="REVIEW",
+        action="HUMAN_REVIEW",
+    )
+
+    review_queue.add_review(review)
+
+    response = client.get(
+        "/reviews/paysim",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+    assert data[0]["transaction_id"] == "api-review-001"
+    assert data[0]["transaction_type"] == "TRANSFER"
+    assert data[0]["amount"] == 10000.0
+    assert data[0]["fraud_probability"] == 0.60
+    assert data[0]["risk_level"] == "REVIEW"
+    assert data[0]["action"] == "HUMAN_REVIEW"
+    assert data[0]["status"] == "PENDING"
+    
+def test_paysim_monitoring_metrics_with_no_labels(tmp_path):
+    client = create_test_client(tmp_path)
+
+    response = client.get(
+        "/monitoring/paysim/metrics",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["evaluated_transactions"] == 0
+    assert data["true_positives"] == 0
+    assert data["true_negatives"] == 0
+    assert data["false_positives"] == 0
+    assert data["false_negatives"] == 0
+
+    assert data["precision"] == 0.0
+    assert data["recall"] == 0.0
+    assert data["f1_score"] == 0.0
+    assert data["accuracy"] == 0.0
+    
+def test_paysim_monitoring_metrics_after_outcome(tmp_path):
+    client = create_test_client(tmp_path)
+
+    transactions = [
+        {
+            "transaction_id": "metrics-tp",
+            "transaction_type": "TRANSFER",
+            "amount": 1000.0,
+            "oldbalance_org": 1000.0,
+            "oldbalance_dest": 0.0,
+        },
+        {
+            "transaction_id": "metrics-tn",
+            "transaction_type": "PAYMENT",
+            "amount": 100.0,
+            "oldbalance_org": 1000.0,
+            "oldbalance_dest": 0.0,
+        },
+    ]
+
+    responses = []
+
+    for transaction in transactions:
+        response = client.post(
+            "/score/paysim",
+            json=transaction,
+            headers={
+                "X-API-Key": "test-secret-key",
+            },
+        )
+        assert response.status_code == 200
+        responses.append(response.json())
+
+    paysim_transaction_store = PaySimTransactionStore(
+    db_path=str(tmp_path / "paysim_transactions.db")
+    )
+
+    paysim_transaction_store.set_actual_outcome(
+        transaction_id="metrics-tp",
+        actual_outcome="FRAUD",
+        outcome_source="TEST",
+        outcome_reason="test outcome",
+    )
+
+    paysim_transaction_store.set_actual_outcome(
+        transaction_id="metrics-tn",
+        actual_outcome="LEGITIMATE",
+        outcome_source="TEST",
+        outcome_reason="test outcome",
+    )
+
+
+    response = client.get(
+        "/monitoring/paysim/metrics",
+        headers={
+            "X-API-Key": "test-secret-key",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["evaluated_transactions"] == 2
+    assert data["true_positives"] + data["true_negatives"] == 2
+    assert data["false_positives"] == 0
+    assert data["false_negatives"] == 0
+    
+    
