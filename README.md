@@ -141,6 +141,52 @@ The project supports two scoring paths:
 
 The low-level model interface is shared through the model adapter abstraction, while dataset-specific feature construction remains isolated.
 
+
+# Public Deployment
+
+The service is deployed publicly on **Render** using the repository's Dockerfile.
+
+**Live API:**
+
+https://fraud-detection-service-2yb0.onrender.com
+
+The deployment was verified against the live service with the following checks:
+
+| Check                       | Result     |
+| --------------------------- | ---------- |
+| `GET /health`               | HTTP 200   |
+| Credit-card `POST /score`   | Working    |
+| PaySim `POST /score/paysim` | Working    |
+| Missing API key             | HTTP 401   |
+| Repeated PaySim transaction | Idempotent |
+| Docker health check         | Passing    |
+
+### Live PaySim example
+
+A test `TRANSFER` transaction sent to the public API produced a high-risk result:
+
+```json
+{
+  "transaction_id": "render-paysim-001",
+  "fraud_probability": 0.9987,
+  "model_decision": "FRAUD",
+  "risk_level": "HIGH_RISK",
+  "action": "HOLD"
+}
+```
+
+The same transaction was submitted again and returned the existing result, confirming the public idempotency behavior.
+
+### Live credit-card regression check
+
+The original credit-card scoring endpoint was also verified after the PaySim deployment. A test transaction was accepted successfully and returned a legitimate, low-risk decision.
+
+### Deployment note
+
+This public deployment is intended as a **portfolio demonstration**. The models are trained on synthetic datasets and the current service uses SQLite persistence, so it should not be treated as a production financial fraud platform.
+
+
+
 ---
 
 # Machine Learning Models
